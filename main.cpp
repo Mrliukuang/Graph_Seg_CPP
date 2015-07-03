@@ -2,6 +2,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include "UF.h"     // Weighted-Union-Find algorithm
+#include "color.h"
 
 using namespace cv;
 using namespace std;
@@ -9,6 +10,12 @@ using namespace std;
 void image_guassian_blur(Mat& mat, double sigma);
 
 Mat build_graph(Mat& mat);
+
+UF segment_graph(Mat& mat, const int nodes, const int k);
+
+Mat sort_graph(const Mat& mat);
+
+void process_small_components(UF& uf, Mat& mat, int min_size);
 
 int main() {
     // Global const params
@@ -21,6 +28,12 @@ int main() {
 
     // Resize image small
     resize(im, im, im.size() / 2); // resize to 1/4 size
+
+    // Get image size
+    const int H = im.rows;
+    const int W = im.cols;
+    const int num_nodes = H * W;
+
     //imshow("im", im);
 
     // Gaussian blur
@@ -31,10 +44,33 @@ int main() {
     // im.convertTo(im, CV_32FC3);
     // cout << im.rows << endl << im.cols;
 
-    // Build graph
+    // build graph
     Mat graph = build_graph(im);
 
-    cout << graph.size();
+    // segment
+    UF uf = segment_graph(graph, num_nodes, K);
+
+    // post process small components
+    process_small_components(uf, graph, min_size);
+
+    // plot result image
+    vector<RGB> color_map(num_nodes);
+    for (int i = 0; i < num_nodes; ++i) {
+        color_map[i].r = (unsigned char) random();
+        color_map[i].g = (unsigned char) random();
+        color_map[i].b = (unsigned char) random();
+    }
+
+    Mat ret_img = Mat::zeros(im.size(), CV_8UC3);
+    for (int h = 0; h < H; h++) {
+        for (int w = 0; w < W; w++) {
+            int id = uf.find_id(h * W + w);
+            ret_img.at<Vec3b>(h, w)[0] = color_map[id].b;
+            ret_img.at<Vec3b>(h, w)[1] = color_map[id].g;
+            ret_img.at<Vec3b>(h, w)[2] = color_map[id].r;
+        }
+    }
+    imshow("ret", ret_img);
 
     waitKey();
 
@@ -42,13 +78,87 @@ int main() {
     return 0;
 }
 
+void process_small_components(UF& uf, Mat& graph, int min_size) {
+    int edge_num = uf.id.size();
+
+    for (int i = 0; i < edge_num; i++) {
+        vector<float> edge = graph.row(i);
+        int a = uf.find_id(edge[0]);
+        int b = uf.find_id(edge[1]);
+        if ((a != b) && ((uf.sz[a] < min_size) || (uf.sz[b] < min_size)))
+            uf.union_two(a, b);
+    }
+}
+
+UF segment_graph(Mat& graph, const int num_nodes, const int K) {
+// Segment graph
+//     Inputs:
+//          graph: [num_edges, 3] matrix, each row = [idxA, idxB, weight]
+//          num_nodes: number of pixels
+//          K: a const parameter
+//     Outputs:
+//          UF: Union-Find data-structure representing graph structure
+
+    int num_edges = graph.rows;
+
+    UF uf(num_nodes);
+    vector<float> threshold(num_nodes, K); // init all threshold = K
+
+    // Sort graph by weights ascending
+    Mat sorted_graph = sort_graph(graph);
+
+    cout << "Segmenting..." << endl;
+    for (int i = 0; i < num_edges; ++i) {
+//        if (i % 5000 == 0)
+//            cout << i << "/" << num_edges << endl;
+
+        // get one edge, convert to one vector/Vec3f that we can use [], amazing!
+        vector<float> edge = sorted_graph.row(i);
+        float weight = edge[2];
+
+        // get edge's end-point id
+        int parent_a = uf.find_id(edge[0]);
+        int parent_b = uf.find_id(edge[1]);
+
+        // compare the weight with threshold
+        bool condition_a = weight <= threshold[parent_a];
+        bool condition_b = weight <= threshold[parent_b];
+
+        if ((parent_a != parent_b) && condition_a && condition_b) {
+            // different components & disjoint diff < internel diff
+            uf.union_two(parent_a, parent_b);
+            int parent_new = uf.find_id(parent_a);
+            threshold[parent_new] = weight + double(K) / uf.sz[parent_new];
+        }
+        //cout << parent_a << " " << parent_b << " " << weight;
+    }
+
+    return uf;
+}
+
+Mat sort_graph(const Mat& graph) {
+// Sort graph according to 3rd column weights ascending
+//  return sorted graph
+
+    Mat col = graph.col(2); // get 3rd column weights
+    Mat1i idx;
+    sortIdx(col, idx, SORT_EVERY_COLUMN | SORT_ASCENDING);
+
+    Mat dst = Mat::zeros(graph.size(), graph.type());
+    for (int i = 0; i < graph.rows; ++i) {
+        graph.row(idx(0, i)).copyTo(dst.row(i));
+    }
+
+    return dst;
+}
+
 Mat build_graph(Mat& im) {
-    /* Build graph on image
-     *  Input:
-     *    im:  RGB image [H*W*3]
-     *  Output:
-     *    graph: [edge_num, 3] each row is [pixelA_idx, pixelB_idx, AB_diff]
-     */
+// Build graph on image
+//  Input:
+//     im:  RGB image [H*W*3]
+//  Output:
+//     graph: [edge_num, 3] each row is [pixelA_idx, pixelB_idx, AB_diff]
+
 
     // get image size
     int W = im.cols;
@@ -104,10 +214,9 @@ Mat build_graph(Mat& im) {
 }
 
 void image_guassian_blur(Mat& mat, double sigma) {
-    /* Smooth image use Guassian filter
-     * blur image before build the graph is very important!
-     * cause it will prevent lots of 0 weights
-     */
+// Smooth image use Guassian filter
+//  blur image before build the graph is very important!
+//  cause it will prevent lots of 0 weights
 
     int alpha = 4;  // parameter to control kernel size
     sigma = max(sigma, 0.01);
