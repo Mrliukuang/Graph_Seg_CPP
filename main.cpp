@@ -7,7 +7,7 @@
 using namespace cv;
 using namespace std;
 
-void image_guassian_blur(Mat& mat, double sigma);
+void image_gaussian_blur(Mat& mat, double sigma);
 
 Mat build_graph(Mat& mat);
 
@@ -21,39 +21,38 @@ int main() {
     // Global const params
     const double sigma = 0.8;     // Gaussian Filter sigma
     const int K = 300;            // const
-    const int min_size = 4000;    // min component size
+    const int min_size = 1500;    // min component size
 
     // Load image
     Mat im = imread("/home/kuang/beauty.jpg");
 
     // Resize image small
     resize(im, im, im.size() / 2); // resize to 1/4 size
+    //imshow("im", im);
 
     // Get image size
     const int H = im.rows;
     const int W = im.cols;
     const int num_nodes = H * W;
 
-    //imshow("im", im);
-
     // Gaussian blur
-    image_guassian_blur(im, sigma);
-    //imshow("im2", im);
+    image_gaussian_blur(im, sigma);
+    imshow("im2", im);
 
     // Convert to float type (Not necessary)
     // im.convertTo(im, CV_32FC3);
     // cout << im.rows << endl << im.cols;
 
-    // build graph
+    // Build graph
     Mat graph = build_graph(im);
 
-    // segment
+    // Segment
     UF uf = segment_graph(graph, num_nodes, K);
 
-    // post process small components
+    // Post process small components
     process_small_components(uf, graph, min_size);
 
-    // plot result image
+    // Plot result image
     vector<RGB> color_map(num_nodes);
     for (int i = 0; i < num_nodes; ++i) {
         color_map[i].r = (unsigned char) random();
@@ -61,7 +60,7 @@ int main() {
         color_map[i].b = (unsigned char) random();
     }
 
-    Mat ret_img = Mat::zeros(im.size(), CV_8UC3);
+    Mat ret_img = Mat::zeros(im.size(), im.type());
     for (int h = 0; h < H; h++) {
         for (int w = 0; w < W; w++) {
             int id = uf.find_id(h * W + w);
@@ -73,7 +72,6 @@ int main() {
     imshow("ret", ret_img);
 
     waitKey();
-
 
     return 0;
 }
@@ -107,7 +105,7 @@ UF segment_graph(Mat& graph, const int num_nodes, const int K) {
     // Sort graph by weights ascending
     Mat sorted_graph = sort_graph(graph);
 
-    cout << "Segmenting..." << endl;
+    cout << "segmenting..." << endl;
     for (int i = 0; i < num_edges; ++i) {
 //        if (i % 5000 == 0)
 //            cout << i << "/" << num_edges << endl;
@@ -125,14 +123,14 @@ UF segment_graph(Mat& graph, const int num_nodes, const int K) {
         bool condition_b = weight <= threshold[parent_b];
 
         if ((parent_a != parent_b) && condition_a && condition_b) {
-            // different components & disjoint diff < internel diff
+            // different components & disjoint diff < internal diff
             uf.union_two(parent_a, parent_b);
             int parent_new = uf.find_id(parent_a);
             threshold[parent_new] = weight + double(K) / uf.sz[parent_new];
         }
         //cout << parent_a << " " << parent_b << " " << weight;
     }
-
+    cout << "done!" << endl;
     return uf;
 }
 
@@ -213,11 +211,11 @@ Mat build_graph(Mat& im) {
     return graph;
 }
 
-void image_guassian_blur(Mat& mat, double sigma) {
+void image_gaussian_blur(Mat& mat, double sigma) {
 // Smooth image use Guassian filter
 //  blur image before build the graph is very important!
 //  cause it will prevent lots of 0 weights
-
+    
     int alpha = 4;  // parameter to control kernel size
     sigma = max(sigma, 0.01);
     int k_size = ceil(sigma * alpha) + 1;
